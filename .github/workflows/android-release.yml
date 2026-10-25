@@ -1,4 +1,4 @@
-# Builds a signed AgroTrack release APK (and an AAB for Google Play) on GitHub's servers.
+# Builds a signed AgroTrack release APK on GitHub's servers.
 #
 # Runs on every push to main, on version tags (v1.2.3), and by hand (Actions → Android release → Run workflow).
 # Signing key comes from repository secrets:
@@ -92,7 +92,7 @@ jobs:
           echo "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/agrotrack-release.jks"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/agrotrack-release.jks" >> "$GITHUB_ENV"
 
-      - name: Build signed APK and AAB
+      - name: Build signed APK
         working-directory: android
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -101,7 +101,7 @@ jobs:
           NODE_ENV: production
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease bundleRelease \
+          ./gradlew assembleRelease \
             -PreactNativeArchitectures=armeabi-v7a,arm64-v8a \
             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" \
             --no-daemon --console=plain
@@ -119,7 +119,6 @@ jobs:
           CODE=$(node -p 'require("./app.json").expo.android.versionCode')
           mkdir -p release
           cp android/app/build/outputs/apk/release/app-release.apk "release/AgroTrack-$VERSION-$CODE.apk"
-          cp android/app/build/outputs/bundle/release/app-release.aab "release/AgroTrack-$VERSION-$CODE.aab"
           ls -la release
 
       - name: Upload APK
@@ -129,18 +128,11 @@ jobs:
           path: release/*.apk
           retention-days: 30
 
-      - name: Upload AAB (Google Play)
-        uses: actions/upload-artifact@v4
-        with:
-          name: AgroTrack-aab
-          path: release/*.aab
-          retention-days: 30
-
       - name: Publish GitHub Release (tags only)
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*
+          files: release/*.apk
           generate_release_notes: true
 
       - name: Clean up signing key
