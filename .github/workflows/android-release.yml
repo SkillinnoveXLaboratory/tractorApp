@@ -57,7 +57,8 @@ jobs:
         run: npm ci
 
       - name: Lint
-        run: npx eslint app components screens lib plugins --rule 'react/jsx-no-undef: error'
+        run: |
+          npx eslint app components screens lib plugins --rule 'react/jsx-no-undef: error'
 
       # Every build gets a higher versionCode so phones accept it as an update.
       - name: Set version
