@@ -1,0 +1,138 @@
+# Builds a signed AgroTrack release APK (and an AAB for Google Play) on GitHub's servers.
+#
+# Runs on every push to main, on version tags (v1.2.3), and by hand (Actions → Android release → Run workflow).
+# Signing key comes from repository secrets:
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+# Download the APK from the run's "Artifacts" section; tagged builds are also attached to a GitHub Release.
+
+name: Android release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # needed only to create a GitHub Release for tags
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Check signing secrets
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          for name in KEYSTORE STORE_PASS ALIAS KEY_PASS; do
+            if [ -z "${!name}" ]; then echo "::error::Missing signing secret ($name). Add it under Settings → Secrets and variables → Actions."; exit 1; fi
+          done
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npx eslint app components screens lib plugins --rule 'react/jsx-no-undef: error'
+
+      # Every build gets a higher versionCode so phones accept it as an update.
+      - name: Set version
+        run: |
+          node -e '
+            const fs = require("fs");
+            const j = JSON.parse(fs.readFileSync("app.json", "utf8"));
+            j.expo.android.versionCode = Number(process.env.GITHUB_RUN_NUMBER) + 100;
+            const tag = process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME.replace(/^v/, "") : null;
+            if (tag) j.expo.version = tag;
+            fs.writeFileSync("app.json", JSON.stringify(j, null, 2));
+            console.log("version", j.expo.version, "versionCode", j.expo.android.versionCode);
+          '
+
+      - name: Generate native Android project
+        run: npx expo prebuild --platform android --no-install --clean
+
+      - name: Restore signing key
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/agrotrack-release.jks"
+          echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/agrotrack-release.jks" >> "$GITHUB_ENV"
+
+      - name: Build signed APK and AAB
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          NODE_ENV: production
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease bundleRelease \
+            -PreactNativeArchitectures=armeabi-v7a,arm64-v8a \
+            -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" \
+            --no-daemon --console=plain
+
+      - name: Verify signature
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | tee signature.txt
+          if grep -q "CN=Android Debug" signature.txt; then echo "::error::APK is signed with the debug key"; exit 1; fi
+
+      - name: Name outputs
+        run: |
+          VERSION=$(node -p 'require("./app.json").expo.version')
+          CODE=$(node -p 'require("./app.json").expo.android.versionCode')
+          mkdir -p release
+          cp android/app/build/outputs/apk/release/app-release.apk "release/AgroTrack-$VERSION-$CODE.apk"
+          cp android/app/build/outputs/bundle/release/app-release.aab "release/AgroTrack-$VERSION-$CODE.aab"
+          ls -la release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AgroTrack-apk
+          path: release/*.apk
+          retention-days: 30
+
+      - name: Upload AAB (Google Play)
+        uses: actions/upload-artifact@v4
+        with:
+          name: AgroTrack-aab
+          path: release/*.aab
+          retention-days: 30
+
+      - name: Publish GitHub Release (tags only)
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+
+      - name: Clean up signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/agrotrack-release.jks"

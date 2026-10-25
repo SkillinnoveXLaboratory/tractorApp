@@ -41,3 +41,13 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Signing keys and their exports — never commit
+*.keystore
+keytool.txt
+keystore.b64
+*.b64
+
+# Local build/export output and tool state
+.expo-export-*/
+.claude/
