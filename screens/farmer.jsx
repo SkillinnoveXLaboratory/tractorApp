@@ -866,7 +866,7 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, minWidth: 0, fontSize: 15, color: colors.text, minHeight: 48 },
   hero: { borderRadius: radius.lg, overflow: "hidden", padding: space.xl, justifyContent: "flex-end", marginBottom: space.lg },
   heroImage: { position: "absolute", top: 0, left: 0 },
-  heroShade: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(11,18,32,0.4)" },
+  heroShade: { ...StyleSheet.absoluteFill, backgroundColor: "rgba(11,18,32,0.4)" },
   heroTitle: { color: colors.white, fontSize: 22, fontWeight: "800" },
   heroText: { color: "#DBEAFE", fontSize: 14, marginTop: 2, marginBottom: space.md },
   heroButton: { alignSelf: "flex-start" },

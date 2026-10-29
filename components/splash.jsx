@@ -1,30 +1,54 @@
 import React, { useEffect, useState } from "react";
-import { Animated, Easing, Modal, StyleSheet, Text, View } from "react-native";
+import { Animated, Dimensions, Easing, Image, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
+import * as Font from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
-import { colors, space } from "../lib/theme";
 
-const LOGO = require("../assets/images/tractor_app_icon.png");
-// The native splash (app.json: imageWidth 288, splash-icon.png with the logo at 480/1024) draws the logo 135dp wide
-// at the exact centre of the whole screen. This screen draws it at the same size and place, and never moves it,
-// so the hand-over from the native splash is invisible.
-const LOGO_SIZE = 135;
-const MIN_VISIBLE_MS = 1700;
+// The native splash (app.json: navy background, splash-icon.png drawn 288dp wide) shows the white logo tile
+// 144dp square at the exact centre of the screen. This screen draws the same image at the same size and place
+// and never moves it, so the hand-over from the native splash is invisible. Regenerate the image with
+// `node scripts/make-brand-assets.js`.
+const TILE_IMAGE = require("../assets/images/splash-icon.png");
+const IMAGE_SIZE = 288;
+const TILE = 144;
+const BRAND_FONT = "ChakraPetch-Bold"; // embedded by the expo-font plugin (app.json); loaded at runtime in Expo Go / web
+const NAVY = "#002C5C";
+const SILVER = "#D1D8E0";
+const MIN_VISIBLE_MS = 2000;
+const BAR_WIDTH = 140;
+const EASE_OUT = Easing.bezier(0.16, 1, 0.3, 1);
 
-// White launch screen: the logo stays put, the AgroTrack name and tagline fade in below it,
-// then everything fades out once the app is ready.
+// Text under the logo, then the tagline and loading bar near the bottom, each fading up in turn.
+const STEPS = { agro: 200, track: 350, tagline: 550, footer: 700 };
+
 export function AppSplash({ ready, onDone }) {
+  const insets = useSafeAreaInsets();
   const [shownAt] = useState(() => Date.now());
   const [visible, setVisible] = useState(true);
-  const [textIn] = useState(() => new Animated.Value(0));
   const [fadeOut] = useState(() => new Animated.Value(1));
-  const [dots] = useState(() => new Animated.Value(0));
+  const [steps] = useState(() => Object.fromEntries(Object.keys(STEPS).map((key) => [key, new Animated.Value(0)])));
+  const [bar] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
-    Animated.timing(textIn, { toValue: 1, duration: 450, delay: 150, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-    const pulse = Animated.loop(Animated.timing(dots, { toValue: 1, duration: 900, easing: Easing.linear, useNativeDriver: true }));
-    pulse.start();
-    return () => pulse.stop();
-  }, [textIn, dots]);
+    if (!Font.isLoaded(BRAND_FONT)) Font.loadAsync({ [BRAND_FONT]: require("../assets/fonts/ChakraPetch-Bold.ttf") }).catch(() => {});
+    Animated.parallel(
+      Object.entries(STEPS).map(([key, delay]) => Animated.timing(steps[key], { toValue: 1, duration: 800, delay, easing: EASE_OUT, useNativeDriver: true })),
+    ).start();
+    // Restarts itself after each sweep (Animated.loop can stall on its last frame on some platforms).
+    let running = true;
+    const sweep = () => {
+      bar.setValue(0);
+      Animated.timing(bar, { toValue: 1, duration: 1600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }).start(({ finished }) => {
+        if (running && finished) sweep();
+      });
+    };
+    sweep();
+    return () => {
+      running = false;
+      bar.stopAnimation();
+    };
+  }, [steps, bar]);
 
   useEffect(() => {
     if (!ready) return undefined;
@@ -38,49 +62,81 @@ export function AppSplash({ ready, onDone }) {
     return () => clearTimeout(timer);
   }, [ready, shownAt, fadeOut, onDone]);
 
-  const textLift = textIn.interpolate({ inputRange: [0, 1], outputRange: [10, 0] });
-  // A full-screen modal is measured from the real screen edges, not from the app's safe-area padding,
-  // so its centre is the same point the native splash uses.
+  // The splash covers the whole physical screen. The name must fit between the logo and the footer even on
+  // short phones, so its size comes from the space below the centre.
+  const screenHeight = Dimensions.get("screen").height;
+  const footerSpace = insets.bottom + 150;
+  const room = screenHeight / 2 - TILE / 2 - 28 - footerSpace;
+  const nameSize = Math.max(30, Math.min(52, Math.floor(room / 2.15)));
+  const appear = (value) => ({
+    opacity: value,
+    transform: [
+      { translateY: value.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
+      { scale: value.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1] }) },
+    ],
+  });
+  const name = { fontSize: nameSize, lineHeight: Math.round(nameSize * 1.02), letterSpacing: nameSize * 0.06 };
+
+  if (!visible) return null;
   return (
-    <Modal visible={visible} transparent animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={() => {}}>
+    // A full-screen layer over the app (app/index.jsx renders it last, outside the safe-area padding), not a Modal:
+    // a Modal is a separate window that some phones stop above the navigation bar, which cut the bottom off.
+    <>
+      <StatusBar style="light" />
       <Animated.View
         style={[styles.root, { opacity: fadeOut }]}
-        // Hide the native splash only once this identical white screen is on display.
+        // Hide the native splash only once this identical navy screen is on display.
         onLayout={() => SplashScreen.hideAsync().catch(() => {})}
         accessibilityLabel="AgroTrack is loading"
       >
-        {/* Exactly the logo's size, centred by the column; the text hangs below it without moving it. */}
-        <View style={styles.logoBox}>
-          <Animated.Image source={LOGO} resizeMode="contain" style={styles.logo} />
-          <Animated.View style={[styles.textBlock, { opacity: textIn, transform: [{ translateY: textLift }] }]}>
-            <Text style={styles.name} numberOfLines={1}>
-              Agro<Text style={styles.nameAccent}>Track</Text>
-            </Text>
-            <Text style={styles.tagline}>Tractors · Marketplace · Agri Doctor</Text>
+        {/* Exactly the tile's size, centred by the root; everything else hangs off it without moving it. */}
+        <View style={styles.tileBox}>
+          <Image source={TILE_IMAGE} style={styles.tileImage} resizeMode="contain" accessibilityIgnoresInvertColors />
+          <View style={styles.nameBlock}>
+            <Animated.Text style={[styles.name, name, appear(steps.agro)]} numberOfLines={1}>
+              AGRO
+            </Animated.Text>
+            <Animated.Text style={[styles.name, name, styles.nameSecond, appear(steps.track)]} numberOfLines={1}>
+              TRACK
+            </Animated.Text>
+          </View>
+        </View>
+        <View style={[styles.footer, { bottom: insets.bottom + 48 }]}>
+          <Animated.View style={appear(steps.tagline)}>
+            <Text style={styles.tagline}>Enhancing agricultural mobility</Text>
+          </Animated.View>
+          <Animated.View style={[styles.barTrack, appear(steps.footer)]}>
+            <Animated.View
+              style={[
+                styles.barFill,
+                { transform: [{ translateX: bar.interpolate({ inputRange: [0, 1], outputRange: [-BAR_WIDTH / 2, BAR_WIDTH] }) }] },
+              ]}
+            />
           </Animated.View>
         </View>
-        <View style={styles.dots}>
-          {[0, 1, 2].map((i) => (
-            <Animated.View
-              key={i}
-              style={[styles.dot, { opacity: dots.interpolate({ inputRange: [0, (i + 0.5) / 3, 1], outputRange: [0.25, 1, 0.25], extrapolate: "clamp" }) }]}
-            />
-          ))}
-        </View>
       </Animated.View>
-    </Modal>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.white, alignItems: "center", justifyContent: "center" },
-  logoBox: { width: LOGO_SIZE, height: LOGO_SIZE, alignItems: "center" },
-  logo: { width: LOGO_SIZE, height: LOGO_SIZE },
-  // Hangs below the logo box, wider than it and centred on it.
-  textBlock: { position: "absolute", top: LOGO_SIZE + 20, width: 320, left: (LOGO_SIZE - 320) / 2, alignItems: "center" },
-  name: { fontSize: 34, fontWeight: "900", color: "#1E293B", letterSpacing: -0.5, textAlign: "center" },
-  nameAccent: { color: "#16A34A" },
-  tagline: { marginTop: space.xs, fontSize: 14, color: colors.muted, fontWeight: "600", textAlign: "center" },
-  dots: { position: "absolute", left: 0, right: 0, bottom: 72, flexDirection: "row", justifyContent: "center", gap: 8 },
-  dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#4F7CAC" },
+  root: { ...StyleSheet.absoluteFill, zIndex: 100, elevation: 100, backgroundColor: NAVY, alignItems: "center", justifyContent: "center" },
+  tileBox: { width: TILE, height: TILE },
+  // Same image the native splash draws, at the same 288dp width, centred on the tile box.
+  tileImage: { position: "absolute", width: IMAGE_SIZE, height: IMAGE_SIZE, left: (TILE - IMAGE_SIZE) / 2, top: (TILE - IMAGE_SIZE) / 2 },
+  nameBlock: { position: "absolute", top: TILE + 28, width: 320, left: (TILE - 320) / 2, alignItems: "center" },
+  name: {
+    fontFamily: BRAND_FONT,
+    color: SILVER,
+    textAlign: "center",
+    includeFontPadding: false,
+    textShadowColor: "rgba(0,0,0,0.25)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  nameSecond: { marginTop: 4 },
+  footer: { position: "absolute", left: 0, right: 0, alignItems: "center", gap: 22 },
+  tagline: { color: "rgba(255,255,255,0.8)", fontSize: 15, letterSpacing: 0.4, textAlign: "center" },
+  barTrack: { width: BAR_WIDTH, height: 4, borderRadius: 999, backgroundColor: "rgba(255,255,255,0.2)", overflow: "hidden" },
+  barFill: { width: BAR_WIDTH / 2, height: 4, borderRadius: 999, backgroundColor: "#FFFFFF" },
 });

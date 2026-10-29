@@ -9,10 +9,10 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "in.skillinnovex.tractorapp"
+      "bundleIdentifier": "in.agrotrack.app"
     },
     "android": {
-      "package": "in.skillinnovex.tractorapp",
+      "package": "in.agrotrack.app",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -33,14 +33,21 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 288,
           "resizeMode": "contain",
-          "backgroundColor": "#FFFFFF",
+          "backgroundColor": "#002C5C",
           "dark": {
             "image": "./assets/images/splash-icon.png",
-            "backgroundColor": "#FFFFFF"
+            "backgroundColor": "#002C5C"
           }
         }
       ],
-      "expo-font",
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/ChakraPetch-Bold.ttf"
+          ]
+        }
+      ],
       "expo-image",
       [
         "expo-status-bar",

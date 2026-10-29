@@ -14,7 +14,7 @@ import { colors, radius, roleLabel, shadow, space, type } from "../lib/theme";
 import { Button, Field, Icon, IconButton, InlineError, keyboardBehavior } from "../components/ui";
 
 const farmImage = require("../assets/images/farm-hero.jpg");
-const appLogo = require("../assets/images/tractor_app_icon.png");
+const appLogo = require("../assets/images/tractor_app_logo_main.png");
 // Hero image is 1200 × 900; the sign-in card overlaps the hero's bottom edge by this much.
 const HERO_RATIO = 900 / 1200;
 const SHEET_OVERLAP = 28;
@@ -315,8 +315,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
     alignItems: "center",
     justifyContent: "center",
+    overflow: "hidden",
   },
-  logoImage: { width: 32, height: 32 },
+  // The logo artwork has wide white margins; filling the white circle keeps it readable at this size.
+  logoImage: { width: 44, height: 44 },
   brand: { color: colors.white, fontSize: 17, fontWeight: "800" },
   heroTitle: { color: colors.white, fontSize: 26, lineHeight: 32, fontWeight: "800", maxWidth: 320 },
   heroSubtitle: { color: "#DBEAFE", fontSize: 14, lineHeight: 20, marginTop: space.sm, maxWidth: 320 },
