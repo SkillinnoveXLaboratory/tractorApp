@@ -415,13 +415,15 @@ const EARNING_PERIODS = [
 const MODE = {
   upi: { label: "UPI", icon: "phone-portrait-outline", color: colors.primary },
   cod: { label: "Cash", icon: "cash-outline", color: colors.violet },
+  online: { label: "Online", icon: "card-outline", color: colors.success },
 };
 
 const itemCount = (order) => (order.items || []).reduce((n, item) => n + Number(item.quantity || 0), 0);
 
-// How verified money splits between cash and UPI: one bar, each mode labelled with value and share.
-function PaymentModes({ byMethod, total }) {
-  const rows = ["upi", "cod"].map((key) => byMethod.find((entry) => entry.method === key) || { method: key, total: 0, count: 0 });
+// How received money splits between online, cash and UPI: one bar, each mode labelled with value and share.
+// Online amounts are the shop’s share after the platform fee.
+function PaymentModes({ byMethod, total, commission }) {
+  const rows = ["online", "upi", "cod"].map((key) => byMethod.find((entry) => entry.method === key) || { method: key, total: 0, count: 0 });
   return (
     <Card>
       <Text style={[type.section, { marginBottom: space.md }]}>Payment modes</Text>
@@ -450,6 +452,7 @@ function PaymentModes({ byMethod, total }) {
           </View>
         );
       })}
+      {commission > 0 ? <Text style={[type.meta, { marginTop: space.sm }]}>Online payments are shown after the platform fee ({money(commission)} this period).</Text> : null}
     </Card>
   );
 }
@@ -497,7 +500,7 @@ export function ShopEarnings(p) {
           <StatTile label="Items sold" value={ready ? s.itemsSold : "—"} icon="basket-outline" tone="violet" />
           <StatTile label="Orders in progress" value={ready ? s.openCount : "—"} hint={ready && s.openCount ? `${money(s.openTotal)} on the way` : undefined} icon="cube-outline" tone="warning" />
         </View>
-        {ready && s.lifetimePayments ? <PaymentModes byMethod={data.byMethod || []} total={s.total} /> : null}
+        {ready && s.lifetimePayments ? <PaymentModes byMethod={data.byMethod || []} total={s.total} commission={s.commission || 0} /> : null}
         {ready && s.lifetimePayments ? <MonthlyChart months={data.months || []} noun="payment" /> : null}
         {awaiting.length ? (
           <>
@@ -539,13 +542,13 @@ export function ShopEarnings(p) {
           const mode = MODE[order.paidVia] || MODE.cod;
           return (
             <Card key={order._id} onPress={() => p.go("orderDetail", order)} style={[styles.payRow, stale && styles.stale]}>
-              <View style={[styles.payIcon, { backgroundColor: order.paidVia === "upi" ? colors.primarySoft : colors.violetSoft }]}>
+              <View style={[styles.payIcon, { backgroundColor: order.paidVia === "online" ? colors.successSoft : order.paidVia === "upi" ? colors.primarySoft : colors.violetSoft }]}>
                 <Icon name={mode.icon} size={20} color={mode.color} />
               </View>
               <View style={{ flex: 1 }}>
                 <View style={styles.between}>
                   <Text style={type.cardTitle}>#{shortId(order._id)}</Text>
-                  <Text style={styles.payAmount}>+{money(order.amount)}</Text>
+                  <Text style={styles.payAmount}>+{money(order.net ?? order.amount)}</Text>
                 </View>
                 <Text style={type.meta} numberOfLines={1}>
                   {order.buyer?.fullName || "Customer"} · {itemCount(order)} item{itemCount(order) === 1 ? "" : "s"}
@@ -554,7 +557,7 @@ export function ShopEarnings(p) {
                   <Icon name="checkmark-circle" size={13} color={colors.success} />
                   <Text style={type.meta} numberOfLines={1}>
                     {mode.label} · {formatDate(order.paymentReceivedAt)}
-                    {order.paymentReference ? ` · Ref ${order.paymentReference}` : ""}
+                    {order.paidVia === "online" ? ` · ${money(order.amount)} paid, fee ${money(order.online?.commission)}` : order.paymentReference ? ` · Ref ${order.paymentReference}` : ""}
                   </Text>
                 </View>
               </View>

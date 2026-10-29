@@ -18,6 +18,7 @@ import { MyProductDetail, MyProducts, ShopEarnings, ShopHome } from "../screens/
 import { VendorDrivers, VendorHome, VendorTractorDetail, VendorTractors } from "../screens/vendor";
 import { DriverEarnings, DriverHome } from "../screens/driver";
 import { Addresses, EditProfile, InfoPage, Notifications, PaymentMethods, Profile, Subscription } from "../screens/account";
+import { Payouts } from "../screens/payouts";
 
 const EMPTY_WISH = { products: [], tractors: [] };
 
@@ -26,6 +27,15 @@ export default function App() {
   // Animated launch screen, shown over whatever loads first until the saved session is read.
   const [splashDone, setSplashDone] = useState(false);
   const splash = splashDone ? null : <AppSplash ready={sessionReady} onDone={() => setSplashDone(true)} />;
+  // Every state renders inside the same full-screen shell with the splash as its last child, so the splash covers
+  // the whole display (behind the status and navigation bars, like the native splash) and keeps running while the
+  // app behind it switches from loading to signed in/out.
+  const shell = (body) => (
+    <View style={styles.shell}>
+      {body}
+      {splash}
+    </View>
+  );
   const [cart, setCart] = useStored("agri_cart", []);
   const [wish, setWish] = useStored("agri_wish", EMPTY_WISH);
   const [screen, setScreen] = useState("home"),
@@ -189,6 +199,10 @@ export default function App() {
   useEffect(() => {
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
       if (!session) {
+        if (registering === "payouts") {
+          setRegistering("success");
+          return true;
+        }
         if (registering) {
           setRegistering(false);
           return true;
@@ -226,18 +240,27 @@ export default function App() {
   };
 
   if (!sessionReady)
-    return (
+    return shell(
       <SafeAreaView style={styles.root}>
         <StatusBar style="dark" />
-        {splash}
-      </SafeAreaView>
+      </SafeAreaView>,
     );
 
   if (!session)
-    return (
+    return shell(
       <SafeAreaView style={styles.root}>
         <StatusBar style="dark" />
-        {registering === "success" ? (
+        {registering === "payouts" ? (
+          // Sign-up step 2 for vendors and shopkeepers: where online payments are settled (skippable).
+          <Payouts
+            onboarding
+            token={pendingSession?.token}
+            user={pendingSession?.user}
+            notify={notify}
+            onDone={() => setRegistering("success")}
+            onSkip={() => setRegistering("success")}
+          />
+        ) : registering === "success" ? (
           <GetStarted
             user={pendingSession?.user}
             onDashboard={() => {
@@ -251,7 +274,7 @@ export default function App() {
           <Register
             onComplete={(result) => {
               setPendingSession(result);
-              setRegistering("success");
+              setRegistering(["vendor", "shopkeeper"].includes(result?.user?.role) ? "payouts" : "success");
             }}
             onBack={() => setRegistering(false)}
           />
@@ -267,8 +290,7 @@ export default function App() {
           />
         )}
         <Toast message={toast} />
-        {splash}
-      </SafeAreaView>
+      </SafeAreaView>,
     );
 
   const safeScreen = (ALLOWED[role] || ALLOWED.farmer).includes(screen) ? screen : "home";
@@ -295,7 +317,7 @@ export default function App() {
   };
   const lockValue = locked && !NEVER_LOCKED.includes(safeScreen) ? { onLocked: () => go("subscription") } : null;
   const key = `${safeScreen}:${selected?._id || selected?.id || (typeof selected === "string" ? selected : "")}`;
-  return (
+  return shell(
     <SafeAreaView style={styles.root}>
       <StatusBar style="dark" />
       <View style={styles.app}>
@@ -314,8 +336,7 @@ export default function App() {
         <Toast message={toast} aboveNav={tab} />
         {tab ? <BottomNav role={role} screen={safeScreen} go={go} locked={locked} cartCount={cart.reduce((sum, line) => sum + line.qty, 0)} /> : null}
       </View>
-      {splash}
-    </SafeAreaView>
+    </SafeAreaView>,
   );
 }
 
@@ -364,6 +385,8 @@ function ScreenFor({ name, role, selected, props: p }) {
       return <Addresses {...p} />;
     case "paymentMethods":
       return <PaymentMethods {...p} />;
+    case "payouts":
+      return <Payouts {...p} />;
     case "search":
       return <GlobalSearch {...p} />;
     case "info":
@@ -385,6 +408,7 @@ function ScreenFor({ name, role, selected, props: p }) {
 
 const styles = StyleSheet.create({
   // White behind the phone's status bar and gesture area so they blend with headers and the tab bar.
+  shell: { flex: 1 },
   root: { flex: 1, backgroundColor: colors.surface },
   app: { flex: 1, backgroundColor: colors.background },
 });

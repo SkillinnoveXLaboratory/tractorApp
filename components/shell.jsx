@@ -43,18 +43,18 @@ export const ALLOWED = {
     "cart", "checkout", "orders", "orderDetail", "notifications", "wishlist",
     "profile", "editProfile", "addresses", "paymentMethods", "search", "info", "agriAdvice",
   ],
-  shopkeeper: ["home", "myProducts", "myProductDetail", "orders", "orderDetail", "earnings", "notifications", "subscription", "profile", "editProfile", "info"],
+  shopkeeper: ["home", "myProducts", "myProductDetail", "orders", "orderDetail", "earnings", "notifications", "subscription", "payouts", "profile", "editProfile", "info"],
   vendor: [
     "home", "tractors", "vendorTractorDetail", "bookings", "bookingDetail", "drivers",
-    "notifications", "subscription", "profile", "editProfile", "info",
+    "notifications", "subscription", "payouts", "profile", "editProfile", "info",
   ],
   driver: ["home", "bookings", "bookingDetail", "earnings", "notifications", "profile", "editProfile", "info"],
 };
 
 // Screens a vendor/shopkeeper can still use without an active subscription; everything else is locked.
-export const OPEN_WHEN_LOCKED = ["home", "profile", "editProfile", "subscription", "info", "notifications"];
+export const OPEN_WHEN_LOCKED = ["home", "profile", "editProfile", "subscription", "payouts", "info", "notifications"];
 // Screens that never get the lock (they hold the way to pay, account settings and help).
-export const NEVER_LOCKED = ["profile", "editProfile", "subscription", "info", "notifications"];
+export const NEVER_LOCKED = ["profile", "editProfile", "subscription", "payouts", "info", "notifications"];
 
 // Floating action buttons sit just above the bottom navigation.
 export const NAV_FAB_OFFSET = NAV_HEIGHT + space.lg;
@@ -121,6 +121,7 @@ const DRAWER_LINKS = {
     ["bookings", "calendar-outline", "Bookings"],
     ["drivers", "people-outline", "Drivers"],
     ["subscription", "diamond-outline", "Premium"],
+    ["payouts", "card-outline", "Payouts"],
     ["notifications", "notifications-outline", "Notifications"],
     ["profile", "person-outline", "Profile"],
   ],
@@ -130,6 +131,7 @@ const DRAWER_LINKS = {
     ["orders", "cube-outline", "Orders"],
     ["earnings", "wallet-outline", "Earnings"],
     ["subscription", "diamond-outline", "Premium"],
+    ["payouts", "card-outline", "Payouts"],
     ["notifications", "notifications-outline", "Notifications"],
     ["profile", "person-outline", "Profile"],
   ],

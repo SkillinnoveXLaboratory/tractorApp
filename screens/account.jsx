@@ -50,6 +50,7 @@ const ROLE_LINKS = {
     ],
     preferences: [
       ["Premium plan", "subscription", "diamond-outline"],
+      ["Payouts (bank / UPI)", "payouts", "wallet-outline"],
       ["Notifications", "notifications", "notifications-outline"],
     ],
   },
@@ -61,6 +62,7 @@ const ROLE_LINKS = {
     ],
     preferences: [
       ["Premium plan", "subscription", "diamond-outline"],
+      ["Payouts (bank / UPI)", "payouts", "wallet-outline"],
       ["Notifications", "notifications", "notifications-outline"],
     ],
   },
@@ -184,7 +186,7 @@ export function Profile(p) {
           title="Preferences"
           links={links.preferences}
           onGo={p.go}
-          subtitles={{ subscription: p.access?.active ? `Active until ${formatDate(p.access.expiresAt)}` : p.access?.required ? "Not active — tap to upgrade" : undefined }}
+          subtitles={{ payouts: "Get paid online straight to your bank", subscription: p.access?.active ? `Active until ${formatDate(p.access.expiresAt)}` : p.access?.required ? "Not active — tap to upgrade" : undefined }}
         />
         <MenuGroup title="Support" links={SUPPORT_LINKS.map(([label, key, icon]) => [label, "info", icon, key])} onGo={p.go} />
         <Button variant="dangerSoft" icon="log-out-outline" block onPress={p.signOut} style={{ marginTop: space.sm }}>

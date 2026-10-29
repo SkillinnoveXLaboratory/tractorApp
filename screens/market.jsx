@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { apiRequest } from "../lib/api";
 import { useResource } from "../lib/hooks";
+import { completeOnlinePayment, paymentMessage, payReturnUrl } from "../lib/pay";
 import { colors, formatDate, money, radius, shortId, space, statusInfo, type } from "../lib/theme";
 import {
   Avatar,
@@ -300,9 +301,20 @@ export function Checkout(p) {
   const saved = addresses.data || [];
   const [selected, setSelected] = useState(null),
     [custom, setCustom] = useState(p.user?.location?.address || ""),
-    [paymentMethod, setPaymentMethod] = useState("cod"),
+    // null = not chosen yet: online when every seller can take it, otherwise cash on delivery.
+    [paymentMethod, setPaymentMethod] = useState(null),
     [saving, setSaving] = useState(false),
     [error, setError] = useState("");
+  // Online payment is offered only when every seller in the cart can receive it (verified payout account).
+  const sellerKeys = [...new Set(p.cart.map((line) => String(line.owner || line.seller || "")))].filter((id) => /^[a-f0-9]{24}$/i.test(id));
+  const online = useResource(sellerKeys.length ? `${p.token}:online:${sellerKeys.join(",")}` : "none", async () => {
+    if (!sellerKeys.length) return { available: false, reason: "" };
+    const results = await Promise.all(sellerKeys.map((id) => apiRequest(`/payments/online-availability?seller=${id}`, { token: p.token })));
+    const blocked = results.find((r) => !r.available);
+    return { available: !blocked, reason: blocked?.reason || "" };
+  });
+  const onlineAvailable = !!online.data?.available;
+  const method = (paymentMethod ?? (onlineAvailable ? "online" : "cod")) === "online" && !onlineAvailable ? "cod" : paymentMethod ?? (onlineAvailable ? "online" : "cod");
   const defaultId = (saved.find((item) => item.isDefault) || saved[0])?._id;
   const chosenId = selected ?? defaultId ?? "custom";
   const address = chosenId === "custom" ? custom.trim() : saved.find((item) => item._id === chosenId)?.address || "";
@@ -313,7 +325,9 @@ export function Checkout(p) {
     setError("");
     const placed = [];
     let remaining = [...p.cart];
+    let unpaid = 0;
     try {
+      const returnUrl = payReturnUrl("orders");
       for (const group of groups) {
         const result = await apiRequest("/orders", {
           method: "POST",
@@ -321,21 +335,26 @@ export function Checkout(p) {
           body: {
             items: group.lines.map((line) => ({ productId: line.id, quantity: line.qty })),
             deliveryAddress: address,
-            paymentMethod,
+            paymentMethod: method,
+            ...(method === "online" ? { returnUrl } : {}),
           },
         });
-        placed.push(result.order);
         const ids = group.lines.map((line) => line.id);
         remaining = remaining.filter((line) => !ids.includes(line.id));
+        let order = result.order;
+        // Online: the order reaches the shop only after Cashfree confirms the payment.
+        if (result.payment) {
+          const paid = await completeOnlinePayment({ token: p.token, checkout: result.payment, returnUrl });
+          if (paid.order) order = paid.order;
+          if (paid.status !== "paid") unpaid += 1;
+        }
+        placed.push(order);
       }
       p.setCart([]);
-      if (placed.length === 1) {
-        p.notify("Order placed");
-        p.replace("orderDetail", placed[0]);
-      } else {
-        p.notify(`${placed.length} orders placed`);
-        p.replace("orders");
-      }
+      if (unpaid) p.notify(unpaid === 1 && placed.length === 1 ? "Payment not completed. Finish it from the order within 2 hours, or it’s cancelled." : `${unpaid} order(s) still need payment. Finish them from My orders.`, 5000);
+      else p.notify(method === "online" ? (placed.length === 1 ? "Paid and ordered" : `${placed.length} orders paid`) : placed.length === 1 ? "Order placed" : `${placed.length} orders placed`);
+      if (placed.length === 1) p.replace("orderDetail", placed[0]);
+      else p.replace("orders");
     } catch (e) {
       p.setCart(remaining);
       setError(placed.length ? `${placed.length} order(s) placed. The rest failed: ${e.message}` : e.message);
@@ -394,14 +413,32 @@ export function Checkout(p) {
           <Field value={custom} onChangeText={setCustom} placeholder="House, street, village, PIN code" multiline />
         ) : null}
         <SectionHeader title="Payment" style={{ marginTop: space.lg }} />
-        <Segmented
-          options={[
-            ["cod", "Cash on delivery", "cash-outline"],
-            ["upi", "UPI on delivery", "phone-portrait-outline"],
-          ]}
-          value={paymentMethod}
-          onChange={setPaymentMethod}
-        />
+        {[
+          ["online", "Pay online now", "UPI, card or net banking · refunded if cancelled", "card-outline"],
+          ["cod", "Cash on delivery", "Pay the seller when it arrives", "cash-outline"],
+          ["upi", "UPI on delivery", "Pay the seller by UPI when it arrives", "phone-portrait-outline"],
+        ].map(([key, label, hint, icon]) => {
+          const disabled = key === "online" && !onlineAvailable;
+          const active = method === key;
+          if (key === "online" && !online.data && !online.loading) return null;
+          return (
+            <Pressable
+              key={key}
+              onPress={() => !disabled && setPaymentMethod(key)}
+              disabled={disabled}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: active, disabled }}
+              style={[styles.option, active && styles.optionActive, disabled && { opacity: 0.55 }]}
+            >
+              <Icon name={active ? "radio-button-on" : "radio-button-off"} size={22} color={active ? colors.primary : colors.subtle} />
+              <View style={{ flex: 1 }}>
+                <Text style={type.cardTitle}>{label}</Text>
+                <Text style={type.meta}>{key === "online" && online.loading && !online.data ? "Checking…" : disabled ? online.data?.reason || "Not available for this seller." : hint}</Text>
+              </View>
+              <Icon name={icon} size={20} color={active ? colors.primary : colors.subtle} />
+            </Pressable>
+          );
+        })}
         <SectionHeader title="Order summary" />
         <Card>
           {p.cart.map((line) => (
@@ -419,8 +456,8 @@ export function Checkout(p) {
           <Text style={type.meta}>To pay</Text>
           <Text style={styles.footerTotal}>{money(cartTotal(p.cart))}</Text>
         </View>
-        <Button loading={saving} onPress={place} style={{ flex: 1.4 }}>
-          {saving ? "Placing…" : "Place order"}
+        <Button loading={saving} icon={method === "online" ? "lock-closed" : undefined} onPress={place} style={{ flex: 1.4 }}>
+          {saving ? (method === "online" ? "Processing…" : "Placing…") : method === "online" ? "Pay & place order" : "Place order"}
         </Button>
       </StickyFooter>
     </>
@@ -495,8 +532,12 @@ export function Orders(p) {
                 </Text>
                 <View style={styles.badgeRow}>
                   <StatusBadge status={order.status} />
-                  {order.paymentStatus === "received" ? (
-                    <Badge label="Paid" tone="success" icon="checkmark-circle" />
+                  {order.status === "pending_payment" ? (
+                    <Badge label="Complete payment" tone="warning" icon="card-outline" />
+                  ) : order.paymentStatus === "refunded" || ["refund_pending", "refunded"].includes(order.online?.status) ? (
+                    <Badge label={order.online?.status === "refund_pending" ? "Refund in progress" : "Refunded"} tone="info" icon="return-down-back-outline" />
+                  ) : order.paymentStatus === "received" ? (
+                    <Badge label={order.paidVia === "online" ? "Paid online" : "Paid"} tone="success" icon="checkmark-circle" />
                   ) : order.status === "delivered" ? (
                     <Badge label={incoming ? "Verify payment" : "Payment due"} tone="warning" icon="hourglass-outline" />
                   ) : null}
@@ -554,7 +595,7 @@ export function StepTimeline({ steps, current }) {
 
 const PAYABLE = ["out_for_delivery", "delivered"];
 const UPI_REFERENCE = /^[A-Za-z0-9]{6,40}$/;
-const modeLabel = (mode) => (mode === "upi" ? "UPI" : "Cash");
+const modeLabel = (mode) => (mode === "online" ? "Online" : mode === "upi" ? "UPI" : "Cash");
 
 // The seller confirms money was actually received. Same rules as the server: UPI needs its
 // transaction reference; cash may carry an optional receipt number.
@@ -641,21 +682,57 @@ export function OrderDetail(p) {
   const next = isSeller && !cancelled && index >= 0 ? ORDER_STEPS[index + 1]?.[0] : null;
   const canCancel = isSeller && ["placed", "confirmed"].includes(current.status);
   const paid = current.paymentStatus === "received";
-  const canVerify = isSeller && !paid && PAYABLE.includes(current.status);
-  const paymentState = paid
-    ? { label: "Paid", tone: "success", icon: "checkmark-circle" }
+  const isOnline = current.paymentMethod === "online";
+  const awaitingOnline = current.status === "pending_payment";
+  const buyerMustPay = !isSeller && awaitingOnline;
+  const canVerify = isSeller && !isOnline && !paid && PAYABLE.includes(current.status);
+  const refundStatus = ["refund_pending", "refunded", "refund_failed"].includes(current.online?.status) ? current.online.status : null;
+  const paymentState = refundStatus
+    ? { label: refundStatus === "refunded" ? "Refunded" : refundStatus === "refund_pending" ? "Refund in progress" : "Refund issue", tone: refundStatus === "refund_failed" ? "danger" : "info", icon: "return-down-back-outline" }
+    : awaitingOnline
+      ? { label: "Not paid yet", tone: "warning", icon: "card-outline" }
+      : paid
+    ? { label: isOnline ? "Paid online" : "Paid", tone: "success", icon: "checkmark-circle" }
     : cancelled
       ? { label: "Not required", tone: "neutral", icon: "remove-circle-outline" }
       : PAYABLE.includes(current.status)
         ? { label: "Awaiting payment", tone: "warning", icon: "hourglass-outline" }
         : { label: "Due on delivery", tone: "neutral", icon: "time-outline" };
-  const hasFooter = !!(next || canCancel || canVerify);
+  const hasFooter = !!(next || canCancel || canVerify || buyerMustPay);
+  const keepPeople = (order) => setCurrent((old) => ({ ...order, buyer: typeof order.buyer === "object" ? order.buyer : old.buyer, seller: typeof order.seller === "object" ? order.seller : old.seller }));
+  // Buyer finishes (or retries) the online payment for an unpaid order.
+  const payNow = async () => {
+    setBusy("pay");
+    try {
+      const returnUrl = payReturnUrl("orders");
+      const checkout = await apiRequest(`/orders/${current._id}/pay`, { method: "POST", token: p.token, body: { returnUrl } });
+      const result = await completeOnlinePayment({ token: p.token, checkout, returnUrl });
+      if (result.order) keepPeople(result.order);
+      p.notify(paymentMessage(result), 4500);
+    } catch (e) {
+      p.notify(e.message || "Couldn’t start the payment.");
+    } finally {
+      setBusy("");
+    }
+  };
+  const cancelUnpaid = async () => {
+    setBusy("cancelled");
+    try {
+      const result = await apiRequest(`/orders/${current._id}/cancel-unpaid`, { method: "POST", token: p.token });
+      keepPeople(result.order);
+      p.notify("Order cancelled");
+    } catch (e) {
+      p.notify(e.message);
+    } finally {
+      setBusy("");
+    }
+  };
   const update = async (status) => {
     setBusy(status);
     try {
       const result = await apiRequest(`/orders/${current._id}/status`, { method: "PATCH", token: p.token, body: { status } });
       setCurrent((old) => ({ ...result.order, buyer: old.buyer, seller: old.seller }));
-      p.notify(`Order ${statusInfo(status).label.toLowerCase()}`);
+      p.notify(status === "cancelled" && isOnline && paid ? "Order cancelled. The buyer is refunded automatically." : `Order ${statusInfo(status).label.toLowerCase()}`);
     } catch (e) {
       p.notify(e.message);
     } finally {
@@ -674,6 +751,8 @@ export function OrderDetail(p) {
           </View>
           {cancelled ? (
             <Notice icon="close-circle-outline" tone="danger" title="Order cancelled" text="This order was cancelled and won’t be delivered." style={{ marginBottom: 0 }} />
+          ) : awaitingOnline ? (
+            <Notice icon="card-outline" tone="warning" title="Waiting for payment" text="The seller gets this order as soon as the payment goes through. Unpaid orders are cancelled after 2 hours." style={{ marginBottom: 0 }} />
           ) : (
             <StepTimeline steps={ORDER_STEPS} current={current.status} />
           )}
@@ -698,15 +777,27 @@ export function OrderDetail(p) {
             <Text style={type.section}>Payment</Text>
             <Badge label={paymentState.label} tone={paymentState.tone} icon={paymentState.icon} />
           </View>
-          <KeyValue label="Buyer chose" value={`${modeLabel(current.paymentMethod)} on delivery`} />
-          {paid ? (
+          <KeyValue label={isSeller ? "Buyer chose" : "Payment"} value={isOnline ? "Paid online in the app" : `${modeLabel(current.paymentMethod)} on delivery`} />
+          {paid || refundStatus ? (
             <>
-              <KeyValue label="Received via" value={modeLabel(current.paidVia)} />
+              {!isOnline ? <KeyValue label="Received via" value={modeLabel(current.paidVia)} /> : null}
               {current.paymentReference ? <KeyValue label="Reference" value={current.paymentReference} /> : null}
-              <KeyValue label="Received on" value={formatDate(current.paymentReceivedAt, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })} />
+              <KeyValue label={isOnline ? "Paid on" : "Received on"} value={formatDate(current.paymentReceivedAt || current.online?.paidAt, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })} />
             </>
           ) : null}
-          <KeyValue label="Order total" value={money(current.amount)} strong last />
+          <KeyValue label="Order total" value={money(current.amount)} strong last={!(isSeller && isOnline && current.online?.status && current.online.status !== "unpaid")} />
+          {isSeller && isOnline && current.online?.status && current.online.status !== "unpaid" ? (
+            <>
+              <KeyValue label={`Platform fee (${current.online.commissionPercent || 0}%)`} value={`− ${money(current.online.commission)}`} />
+              <KeyValue label="Your share" value={money(current.online.sellerShare)} strong last />
+              <Text style={[type.meta, { marginTop: space.sm }]}>
+                {refundStatus ? "This payment was refunded to the buyer, so nothing is settled to you." : "Settles straight to your payout account, usually within 1–2 working days."}
+              </Text>
+            </>
+          ) : null}
+          {!isSeller && isOnline && paid && !refundStatus && !cancelled ? (
+            <Text style={[type.meta, { marginTop: space.sm }]}>Refunded automatically if the seller cancels this order.</Text>
+          ) : null}
           {canVerify && current.status === "delivered" ? (
             <Notice icon="hourglass-outline" tone="warning" text="Delivered. Verify the payment once you have received it so it counts in your earnings." style={{ marginTop: space.md, marginBottom: 0 }} />
           ) : null}
@@ -728,6 +819,16 @@ export function OrderDetail(p) {
       </Screen>
       {hasFooter ? (
         <StickyFooter>
+          {buyerMustPay ? (
+            <>
+              <Button variant="dangerSoft" loading={busy === "cancelled"} disabled={!!busy} onPress={cancelUnpaid} style={{ flex: 1 }}>
+                Cancel
+              </Button>
+              <Button icon="card-outline" loading={busy === "pay"} disabled={!!busy} onPress={payNow} style={{ flex: 1.6 }}>
+                {`Pay ${money(current.amount)}`}
+              </Button>
+            </>
+          ) : null}
           {canVerify ? (
             <Button
               variant={next ? "secondary" : "success"}

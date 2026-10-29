@@ -2,9 +2,11 @@ import React, { useEffect, useState } from "react";
 import { Alert, Animated, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { apiRequest } from "../lib/api";
 import { useResource } from "../lib/hooks";
+import { completeOnlinePayment, paymentMessage, payReturnUrl } from "../lib/pay";
 import { acres, colors, formatDate, money, shortId, space, type } from "../lib/theme";
 import {
   Avatar,
+  Badge,
   Button,
   Card,
   Chip,
@@ -32,6 +34,15 @@ const FILTERS = {
   vendor: [["all", "All"], ["pending", "New requests"], ["active", "Active"], ["completed", "Completed"], ["cancelled", "Cancelled"]],
   driver: [["all", "All"], ["active", "Active"], ["completed", "Completed"]],
 };
+
+// Online payment state shown to the farmer and the vendor (never to drivers).
+const PAYMENT_BADGE = {
+  paid: ["success", "Paid online", "checkmark-circle"],
+  refund_pending: ["warning", "Refund in progress", "time-outline"],
+  refunded: ["info", "Refunded", "return-down-back-outline"],
+  refund_failed: ["danger", "Refund issue", "alert-circle"],
+};
+const paymentBadge = (booking, role) => (role !== "driver" ? PAYMENT_BADGE[booking.payment?.status] : null);
 
 const matches = (booking, filter) =>
   filter === "all" ? true : filter === "active" ? ACTIVE.includes(booking.status) : booking.status === filter;
@@ -112,7 +123,10 @@ export function BookingCard({ booking, role, onPress }) {
           </Text>
         </View>
         <View style={[styles.between, { marginTop: space.sm }]}>
-          <StatusBadge status={booking.status} />
+          <View style={styles.badges}>
+            <StatusBadge status={booking.status} />
+            {paymentBadge(booking, role) ? <Badge label={paymentBadge(booking, role)[1]} tone={paymentBadge(booking, role)[0]} icon={paymentBadge(booking, role)[2]} /> : role === "farmer" && booking.onlinePay?.available ? <Badge label="Pay online" tone="primary" icon="card-outline" /> : null}
+          </View>
           {party ? (
             <Text style={[type.meta, styles.party]} numberOfLines={1}>
               {party}
@@ -216,6 +230,44 @@ function PersonCard({ label, person, icon = "person-outline" }) {
   );
 }
 
+// Payment summary: farmers see what they paid; vendors also see their share after the platform fee.
+function PaymentCard({ booking, role }) {
+  const payment = booking.payment;
+  if (role === "driver" || !payment?.status || payment.status === "unpaid") {
+    if (role === "farmer" && booking.onlinePay?.available)
+      return <Notice icon="card-outline" title="Pay online" text="Pay securely in the app with UPI, card or net banking. Your money is protected — it’s refunded automatically if the booking is cancelled." />;
+    return null;
+  }
+  const badge = PAYMENT_BADGE[payment.status];
+  return (
+    <Card>
+      <View style={[styles.between, { marginBottom: space.xs }]}>
+        <Text style={type.section}>Payment</Text>
+        {badge ? <Badge label={badge[1]} tone={badge[0]} icon={badge[2]} /> : null}
+      </View>
+      <KeyValue label="Paid online" value={money(payment.amount)} />
+      {payment.paidAt ? <KeyValue label="Paid on" value={formatDate(payment.paidAt, { day: "numeric", month: "short", year: "numeric" })} /> : null}
+      {role === "vendor" ? (
+        <>
+          <KeyValue label={`Platform fee (${payment.commissionPercent || 0}%)`} value={`− ${money(payment.commission)}`} />
+          <KeyValue label="Your share" value={money(payment.sellerShare)} strong last />
+        </>
+      ) : null}
+      <Text style={[type.meta, { marginTop: space.sm }]}>
+        {payment.status === "paid"
+          ? role === "vendor"
+            ? "Settles straight to your payout account, usually within 1–2 working days."
+            : "Refunded automatically if this booking is cancelled."
+          : payment.status === "refunded"
+            ? "The full amount was returned to the farmer’s original payment method."
+            : payment.status === "refund_pending"
+              ? "The refund is being processed. It usually reaches the account in 5–7 working days."
+              : "The refund needs attention. AgroTrack support is looking into it."}
+      </Text>
+    </Card>
+  );
+}
+
 export function BookingDetail(p) {
   const [current, setCurrent] = useState(p.booking || {}),
     [changingDriver, setChangingDriver] = useState(false),
@@ -257,6 +309,28 @@ export function BookingDetail(p) {
       setBusy("");
     }
   };
+  // Farmer pays online once the vendor accepts; the server confirms it with Cashfree before anything changes.
+  const pay = async () => {
+    setBusy("pay");
+    try {
+      const returnUrl = payReturnUrl("bookings");
+      const checkout = await apiRequest(`/bookings/${current._id}/pay`, { method: "POST", token: p.token, body: { returnUrl } });
+      const result = await completeOnlinePayment({ token: p.token, checkout, returnUrl });
+      if (result.booking) setCurrent((prev) => ({ ...keepPeople(result.booking), onlinePay: { available: result.status !== "paid" && !!prev.onlinePay?.available } }));
+      p.notify(paymentMessage(result), 4500);
+    } catch (e) {
+      p.notify(e.message || "Couldn’t start the payment.");
+    } finally {
+      setBusy("");
+    }
+  };
+  const paid = current.payment?.status === "paid";
+  const canPay = role === "farmer" && !!current.onlinePay?.available && (!current.payment?.status || current.payment.status === "unpaid");
+  const payButton = canPay ? (
+    <Button icon="card-outline" disabled={!!busy} loading={busy === "pay"} onPress={pay} style={{ flex: 1.6 }}>
+      {`Pay ${money(current.amount)} online`}
+    </Button>
+  ) : null;
   const driver = current.driver && typeof current.driver === "object" ? current.driver : null;
   const showPicker = vendorCanAssign && (!current.driver || changingDriver);
   const cancelled = status === "cancelled";
@@ -281,17 +355,28 @@ export function BookingDetail(p) {
     );
   else if (role === "farmer" && ["pending", "accepted"].includes(status))
     footer = (
-      <Button
-        variant="dangerSoft"
-        block
-        disabled={!!busy}
-        loading={busy === "cancelled"}
-        onPress={() => confirm("Cancel this booking?", "The vendor will be told you no longer need this tractor.", "Cancel booking", () => setStatus("cancelled", "Booking cancelled"))}
-        style={{ flex: 1 }}
-      >
-        Cancel booking
-      </Button>
+      <>
+        <Button
+          variant="dangerSoft"
+          block={!payButton}
+          disabled={!!busy}
+          loading={busy === "cancelled"}
+          onPress={() =>
+            confirm(
+              "Cancel this booking?",
+              paid ? `The vendor will be told you no longer need this tractor. Your payment of ${money(current.payment.amount)} will be refunded to your original payment method.` : "The vendor will be told you no longer need this tractor.",
+              "Cancel booking",
+              () => setStatus("cancelled", paid ? "Booking cancelled. Your refund has started." : "Booking cancelled"),
+            )
+          }
+          style={{ flex: 1 }}
+        >
+          {payButton ? "Cancel" : "Cancel booking"}
+        </Button>
+        {payButton}
+      </>
     );
+  else if (payButton) footer = payButton;
   else if (role === "driver" && DRIVER_NEXT[status]) {
     const [next, label, icon] = DRIVER_NEXT[status];
     footer = (
@@ -332,6 +417,7 @@ export function BookingDetail(p) {
           {current.tractorSnapshot?.pricePerAcre ? <KeyValue label="Rate" value={`${money(current.tractorSnapshot.pricePerAcre)} / acre`} /> : null}
           <KeyValue label="Amount" value={money(current.amount)} strong last />
         </Card>
+        <PaymentCard booking={current} role={role} />
         {current.notes ? (
           <Card>
             <Text style={[type.overline, { marginBottom: space.sm }]}>Notes from farmer</Text>
@@ -447,6 +533,7 @@ const styles = StyleSheet.create({
   stopLabelOn: { color: colors.primary, fontWeight: "800" },
   personCard: { flexDirection: "row", alignItems: "center", gap: space.md },
   assignText: { color: colors.primary, fontSize: 14, fontWeight: "800" },
+  badges: { flexDirection: "row", flexWrap: "wrap", gap: space.xs, flex: 1 },
   cancelRow: { minHeight: 52, alignItems: "center", justifyContent: "center", borderTopWidth: 1, borderTopColor: colors.divider },
   cancelText: { color: colors.textSecondary, fontSize: 14, fontWeight: "700" },
 });
