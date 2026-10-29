@@ -72,7 +72,8 @@
         }
       ],
       "./plugins/withUpiApps",
-      "./plugins/withReleaseSigning"
+      "./plugins/withReleaseSigning",
+      "./plugins/withReleaseCodeKeep"
     ],
     "extra": {
       "apiBaseUrl": "https://tractor.skillinnovex.in/api"
