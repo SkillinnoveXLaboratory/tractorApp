@@ -9,10 +9,10 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "in.agrotrack.app"
+      "bundleIdentifier": "com.agrotrackrental.app"
     },
     "android": {
-      "package": "in.agrotrack.app",
+      "package": "com.agrotrackrental.app",
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
