@@ -1,9 +1,9 @@
-# Builds a signed AgroTrack release APK on GitHub's servers.
+# Builds a signed AgroTrack release App Bundle (.aab) for Google Play on GitHub's servers.
 #
 # Runs on every push to main, on version tags (v1.2.3), and by hand (Actions → Android release → Run workflow).
 # Signing key comes from repository secrets:
 #   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
-# Download the APK from the run's "Artifacts" section; tagged builds are also attached to a GitHub Release.
+# Download the AAB from the run's "Artifacts" section and upload it in Play Console; tagged builds are also attached to a GitHub Release.
 
 name: Android release
 
@@ -92,7 +92,7 @@ jobs:
           echo "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/agrotrack-release.jks"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/agrotrack-release.jks" >> "$GITHUB_ENV"
 
-      - name: Build signed APK
+      - name: Build signed App Bundle
         working-directory: android
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -101,38 +101,39 @@ jobs:
           NODE_ENV: production
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease \
+          ./gradlew bundleRelease \
             -PreactNativeArchitectures=armeabi-v7a,arm64-v8a \
             -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" \
             --no-daemon --console=plain
 
       - name: Verify signature
         run: |
-          APK=android/app/build/outputs/apk/release/app-release.apk
-          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
-          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | tee signature.txt
-          if grep -q "CN=Android Debug" signature.txt; then echo "::error::APK is signed with the debug key"; exit 1; fi
+          AAB=android/app/build/outputs/bundle/release/app-release.aab
+          jarsigner -verify "$AAB" | tee verify.txt
+          grep -q "jar verified" verify.txt || { echo "::error::App Bundle signature did not verify"; exit 1; }
+          keytool -printcert -jarfile "$AAB" | tee signature.txt
+          if grep -q "CN=Android Debug" signature.txt; then echo "::error::App Bundle is signed with the debug key"; exit 1; fi
 
       - name: Name outputs
         run: |
           VERSION=$(node -p 'require("./app.json").expo.version')
           CODE=$(node -p 'require("./app.json").expo.android.versionCode')
           mkdir -p release
-          cp android/app/build/outputs/apk/release/app-release.apk "release/AgroTrack-$VERSION-$CODE.apk"
+          cp android/app/build/outputs/bundle/release/app-release.aab "release/AgroTrack-$VERSION-$CODE.aab"
           ls -la release
 
-      - name: Upload APK
+      - name: Upload App Bundle
         uses: actions/upload-artifact@v4
         with:
-          name: AgroTrack-apk
-          path: release/*.apk
+          name: AgroTrack-aab
+          path: release/*.aab
           retention-days: 30
 
       - name: Publish GitHub Release (tags only)
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
-          files: release/*.apk
+          files: release/*.aab
           generate_release_notes: true
 
       - name: Clean up signing key
